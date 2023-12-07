@@ -1,0 +1,15 @@
+**/__pycache__/
+# /data/coco/images/
+# /data/minicoco/images/
+# /data/coco/outfiles/
+# /data/minicoco/outfiles/
+# /data/flickr30k/images/
+# /data/flickr30k/outfiles/
+/data/
+/XXCap/__pycache__/
+/XXCap/preprocess/minicoco_preprocess.py
+/XXCap/preprocess_outputs/
+/XXCap/checkpoints/
+/others/
+/pretrained/
+/cache/
