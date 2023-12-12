@@ -88,14 +88,15 @@ class CaptionModel(nn.Module):
         return nn.Transformer.generate_square_subsequent_mask(token_size)
 
 
-    def inference(self, image_features, prompt_tokens, tokenizer=None):
-        if tokenizer is None:
-            return self.greedy_search(image_features, prompt_tokens)
+    def inference(self, image_features, prompt_tokens, tokenizer, use_beam=True):
+        if not use_beam:
+            return self.greedy_search(image_features, prompt_tokens, tokenizer)
         beam_search_results = self.beam_search(image_features, prompt_tokens, tokenizer)
         return beam_search_results
 
     # batch_size = 1
-    def greedy_search(self, image_features, prompt_tokens, max_length=50):
+    def greedy_search(self, image_features, prompt_tokens, tokenizer, max_length=50):
+        eos = tokenizer.encode('<|endoftext|>')[0]
         image_features = self.clip_project(image_features.unsqueeze(1)) # (b, 1, 512)
         tokens = prompt_tokens
         for i in range(max_length):
@@ -104,60 +105,60 @@ class CaptionModel(nn.Module):
             out = self.decoder_linear(self.dropout(out[:, -1]))
             prediction = torch.argmax(out, dim=1, keepdim=True) # (b, 1)
             tokens = torch.cat((tokens, prediction), dim=1)
-            if prediction[0] == 49407:
+            if prediction[0] == eos:
                 break
         # 截取prompts后的部分
         tokens = tokens[:, len(prompt_tokens[0]):]
         return tokens
     
-    def beam_search(self, image_features, prompt_tokens, tokenizer, temperature=1.0, max_len=50, beam_width=5, end_of_sentences=['.', ' .']):
-        eos = [tokenizer.encode(end_of_sentence)[-1] for end_of_sentence in end_of_sentences]
+    def beam_search(self, image_features, prompt_tokens, tokenizer, temperature=1.0, max_len=80, beam_width=5):
+        eos = tokenizer.encode('<|endoftext|>')[0]
         scores = None
         seq_lengths = torch.ones(beam_width, device=device)
         is_stopped = torch.zeros(beam_width, device=device, dtype=torch.bool)
-        tokens = prompt_tokens
+        tokens = prompt_tokens.to(device)
         image_features = self.clip_project(image_features.unsqueeze(1)).to(device)
-        
-        generated = self.positional_encoding(self.embedding(tokens)).to(device)
         for i in range(max_len):
+            generated = self.positional_encoding(self.embedding(tokens)) # （1, seq_len, 512）
             outputs = self.transformer_decoder(memory=image_features, tgt=generated)
             outputs = self.decoder_linear(self.dropout(outputs[:, -1]))
             outputs = outputs / (temperature if temperature > 0 else 1.0)
             logits = outputs.softmax(-1).log()
             if scores is None:
                 scores, next_tokens = logits.topk(beam_width, -1)
-                image_features = image_features.expand(beam_width, *image_features.shape[1:])
-                generated = generated.expand(beam_width, *generated.shape[1:])
                 next_tokens, scores = next_tokens.permute(1, 0), scores.squeeze(0)
 
+                image_features = image_features.expand(beam_width, *image_features.shape[1:])
+                # generated = generated.expand(beam_width, *generated.shape[1:])
                 tokens = tokens.expand(beam_width, *tokens.shape[1:])
                 tokens = torch.cat((tokens, next_tokens), dim=1)
             else:
                 logits[is_stopped] = -float(np.inf)
                 logits[is_stopped, 0] = 0
-                scores_sum = scores[:, None] + logits
+                # scores[:, None] means change scores' shape from 1*k to k*1 
+                scores_sum = scores[:, None] + logits # (k, 49408)
                 seq_lengths[~is_stopped] += 1
-                scores_sum_average = scores_sum / seq_lengths[:, None]
-                scores_sum_average, next_tokens = scores_sum_average.view(-1).topk(beam_width, -1)
-                next_tokens_source = torch.div(next_tokens, scores_sum.shape[1], rounding_mode='trunc')
-                seq_lengths = seq_lengths[next_tokens_source]
-                next_tokens = next_tokens % scores_sum.shape[1]
+                scores_sum_average = scores_sum / seq_lengths[:, None] # (k, 49408)
+                scores_sum_average, next_tokens = scores_sum_average.view(-1).topk(beam_width, -1) # flatten before topk
+                next_tokens_source = torch.div(next_tokens, scores_sum.shape[1], rounding_mode='trunc') # means belong to which k
+                seq_lengths = seq_lengths[next_tokens_source] # pick up seq_lengths needed
+                next_tokens = next_tokens % scores_sum.shape[1] # get truely next_tokens
                 next_tokens = next_tokens.unsqueeze(1)
-                tokens = tokens[next_tokens_source]
+                tokens = tokens[next_tokens_source] # pick up tokens needed
                 tokens = torch.cat((tokens, next_tokens), dim=1)
                 generated = generated[next_tokens_source]
                 scores = scores_sum_average * seq_lengths
                 is_stopped = is_stopped[next_tokens_source]
-            next_token_embed = self.positional_encoding(self.embedding(next_tokens)).view(generated.shape[0], 1, -1)
-            generated = torch.cat((generated, next_token_embed), dim=1)
-            assert len(eos) == 2 # hack
-            is_stopped = is_stopped + (next_tokens.eq(eos[0]) | next_tokens.eq(eos[1])).squeeze()
+            # next_token_embed = self.positional_encoding(self.embedding(next_tokens))
+            # generated = torch.cat((generated, next_token_embed), dim=1)
+            is_stopped = is_stopped + (next_tokens.eq(eos)).squeeze()
             if is_stopped.all():
                 break
         scores = scores / seq_lengths
         output_list = tokens.cpu().numpy()
-        output_texts = [output[:int(length)] for output, length in zip(output_list, seq_lengths)]
+        output_tokens = [output[:] for output, length in zip(output_list, seq_lengths)]
         order = scores.argsort(descending=True)
-        output_texts = [output_texts[i] for i in order]
-        # print([output_texts[0]])
-        return [output_texts[0][len(prompt_tokens[0]):]]
+        output_tokens = [output_tokens[i] for i in order]
+        # print(tokenizer.decode(output_tokens[0][len(prompt_tokens[0]):]))
+        return [output_tokens[0][len(prompt_tokens[0]):]]
+    

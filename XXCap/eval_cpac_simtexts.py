@@ -47,17 +47,18 @@ def eval(model:CaptionModel, tokenizer, args):
     progress = tqdm(total=len(val_data_loader), desc='')
     with torch.no_grad():
         for batch_id, (image_id, image_features, test_captions) in enumerate(val_data_loader):
-            
+            # if batch_id == 1:
+            #     break
             image_features = image_features.unsqueeze(0).to(device).float()
 
-            embedding = projection(image_features, support_memory, k=100)
+            embedding = projection(image_features, support_memory, k=0)
             
             prompt_captions = get_image_sim_texts(image_features, captions, support_memory)
 
             prompt_token = compose_prompts(tokenizer, prompt_captions)
             prompt_token = torch.cat((bos, prompt_token)).unsqueeze(0).to(device)
 
-            inference_outputs = model.inference(embedding, prompt_token)
+            inference_outputs = model.inference(embedding, prompt_token, tokenizer, use_beam=args.use_beam)
             batch_sentence_output = []
             for result in inference_outputs:
                 result = result[result > 0].tolist()
@@ -81,7 +82,7 @@ def main(args):
     args_dict = vars(args)
     args_dict['vocab_size'] = len(_tokenizer.encoder)
     model = CaptionModel(args_dict)
-    model.load_state_dict(torch.load(f'XXCap/checkpoints/{args.source_dataset}/cpac_simtexts/transformer_decoder-0.65.pt', map_location='cpu'))
+    model.load_state_dict(torch.load(f'XXCap/checkpoints/{args.source_dataset}/cpac_simtexts/transformer_decoder-0.63.pt', map_location='cpu'))
     model.to(device)
     model.eval()
     coco_stat = eval(model, _tokenizer, args)
@@ -91,7 +92,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--embed_size', default=512, type=int, help='dimension for word embedding vector')
     parser.add_argument('--dropout', default=0.1, type=float, help='')
-    parser.add_argument('--source_dataset', default='minicoco', type=str, help='')
-    parser.add_argument('--target_dataset', default='minicoco', type=str, help='')
+    parser.add_argument('--source_dataset', default='flickr30k', type=str, help='')
+    parser.add_argument('--target_dataset', default='coco', type=str, help='')
+    parser.add_argument('--use_beam', default=True, type=bool, help='')
     args = parser.parse_args()
     main(args)
