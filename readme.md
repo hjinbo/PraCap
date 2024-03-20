@@ -1,6 +1,6 @@
 ## Implementation for PraCap
 
-**Read this in other languages: [中文](README_zh.md).**
+**Read this in other languages: [中文](readme_zh.md).**
 
 ### Data
 
