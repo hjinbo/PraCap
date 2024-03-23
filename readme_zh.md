@@ -20,6 +20,8 @@
 
 先运行preprocess目录下的dataset_split.py获得训练集，验证集和测试集，执行完毕后运行同目录下的text_features_extraction.py，运行时需要注意这两个文件的参数。此时，将在preprocess_out目录下生成对应数据集的pkl文件。
 
+在根目录下创建others/文件夹，然后运行utils.py中get_support_memory方法。
+
 ### 训练
 
 运行train_cpac_simtexts.py，注意所需训练的数据集这一参数。
